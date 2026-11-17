@@ -50,7 +50,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_17_120006) do
     t.index ["department_id"], name: "index_employees_on_department_id"
     t.index ["employee_number"], name: "index_employees_on_employee_number", unique: true
     t.check_constraint "(employment_status::text = 'terminated'::text) = (terminated_on IS NOT NULL) AND (terminated_on IS NULL OR terminated_on >= hired_on)", name: "employees_terminated_on_rule"
-    t.check_constraint "employment_status::text = ANY (ARRAY['active'::character varying::text, 'on_leave'::character varying::text, 'terminated'::character varying::text])", name: "employees_status_values"
+    t.check_constraint "employment_status::text = ANY (ARRAY['active'::character varying, 'on_leave'::character varying, 'terminated'::character varying]::text[])", name: "employees_status_values"
     t.check_constraint "job_level >= 1 AND job_level <= 7", name: "employees_job_level_range"
   end
 
@@ -81,7 +81,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_17_120006) do
     t.check_constraint "btrim(reason::text) <> ''::text", name: "salary_records_reason_present"
     t.check_constraint "effective_to IS NULL OR effective_to > effective_from", name: "salary_records_interval_ordered"
     t.check_constraint "fx_rate > 0::numeric AND fx_rate <> 'NaN'::numeric", name: "salary_records_fx_rate_positive"
-    t.check_constraint "pay_frequency::text = ANY (ARRAY['monthly'::character varying::text, 'annual'::character varying::text])", name: "salary_records_pay_frequency_values"
+    t.check_constraint "pay_frequency::text = ANY (ARRAY['monthly'::character varying, 'annual'::character varying]::text[])", name: "salary_records_pay_frequency_values"
     t.exclusion_constraint "employee_id WITH =, tstzrange(effective_from, effective_to, '[)'::text) WITH &&", using: :gist, name: "salary_records_no_overlap"
   end
 
