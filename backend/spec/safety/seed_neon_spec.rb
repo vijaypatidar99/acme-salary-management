@@ -27,7 +27,9 @@ RSpec.describe NeonSeed do
 
   it "rejects wrong database/host, poolers, duplicate TLS flags and connection overrides" do
     [ config["DATABASE_URL"].sub("/neondb?", "/other?"), config["DATABASE_URL"].sub(host, "ep-other.neon.tech"),
-      config["DATABASE_URL"].sub("sslmode=require", "sslmode=disable"), config["DATABASE_URL"] + "&sslmode=disable",
+      config["DATABASE_URL"].sub("sslmode=require", "sslmode=disable"),
+      config["DATABASE_URL"].sub("sslmode=require", "sslmode=prefer"),
+      config["DATABASE_URL"].sub("?sslmode=require", ""), config["DATABASE_URL"] + "&sslmode=disable",
       config["DATABASE_URL"] + "&host=elsewhere", "not a valid URL" ].each do |url|
       expect { described_class.validate_config!(config.merge("DATABASE_URL" => url)) }.to raise_error(described_class::Refused)
     end
@@ -35,14 +37,18 @@ RSpec.describe NeonSeed do
   end
 
   class ReadOnlyConnection
-    attr_reader :queries
+    RawClient = Struct.new(:host, :tls) do
+      def ssl_in_use? = tls
+    end
+
+    attr_reader :queries, :client
     attr_accessor :overrides
     def initialize(host)
-      @host = host
+      @client = RawClient.new(host, true)
       @queries = []
       @overrides = {}
     end
-    def raw_connection = Struct.new(:host).new(@host)
+    def raw_connection = client
     def select_value(sql)
       @queries << sql
       return overrides[sql] if overrides.key?(sql)
@@ -62,11 +68,27 @@ RSpec.describe NeonSeed do
     described_class::TABLES.each { |table| expect(connection.queries).to include("SELECT count(*) FROM public.#{table}") }
   end
 
-  it "refuses nonempty/missing tables, wrong identity, missing TLS and missing extensions" do
+  it "accepts active client TLS even when Neon's backend pg_stat_ssl would be false" do
+    connection = ReadOnlyConnection.new(host)
+    connection.overrides["SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()"] = false
+    expect { described_class.preflight!(connection, host) }.not_to raise_error
+    expect(connection.queries.grep(/pg_stat_ssl/)).to be_empty
+  end
+
+  it "fails closed for inactive or indeterminate client TLS, regardless of server-side SSL" do
+    [ false, nil ].each do |tls|
+      connection = ReadOnlyConnection.new(host)
+      connection.client.tls = tls
+      connection.overrides["SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()"] = true
+      expect { described_class.preflight!(connection, host) }.to raise_error(described_class::Refused, /client connection is not using TLS/)
+      expect(connection.queries.grep(/count\(\*\)/)).to be_empty
+    end
+  end
+
+  it "refuses nonempty/missing tables, wrong identity and missing extensions" do
     [ [ "SELECT count(*) FROM public.employees", 1 ], [ "SELECT count(*) FROM public.salary_records", 1 ],
       [ "SELECT count(*) FROM public.currencies", 1 ], [ "SELECT to_regclass('public.employees')", nil ],
       [ "SELECT current_database()", "other" ], [ "SELECT current_schema()", "other" ],
-      [ "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()", false ],
       [ "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='btree_gist')", false ] ].each do |query, value|
       connection = ReadOnlyConnection.new(host)
       connection.overrides[query] = value

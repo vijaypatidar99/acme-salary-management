@@ -27,7 +27,10 @@ Use the direct URL with credentials properly URL-encoded. Only `sslmode`, `chann
 `connect_timeout` and `sslrootcert` query options are accepted; duplicates and hidden host/service
 or search-path overrides are refused. `verify-full` is preferable when configured with a trusted
 CA; `require` enforces encryption but does not provide the same hostname verification assurance.
-The live connection must also report TLS in `pg_stat_ssl`.
+The live Rails-to-Neon connection must also return `true` from
+`connection.raw_connection.ssl_in_use?` (the pg/libpq client TLS status). Neon terminates TLS at
+its proxy, so `pg_stat_ssl` can report false for the proxy-to-compute hop while client TLS is active.
+It is not used as the workflow's client-encryption gate.
 [Neon secure connections](https://neon.com/docs/connect/connect-securely).
 
 ## Trigger exactly once
@@ -107,7 +110,8 @@ shown in comments. These queries never expose the URL or credentials.
 ```sql
 BEGIN READ ONLY;
 SELECT current_database(), current_schema(), current_setting('server_version');
-SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid(); -- true
+-- Server-side pg_stat_ssl does not prove Rails-to-Neon client TLS behind the Neon proxy.
+-- The workflow verifies that connection with PG::Connection#ssl_in_use?, not a SQL view.
 SELECT
   (SELECT count(*) FROM employees) AS employees,           -- 10000
   (SELECT count(*) FROM salary_records) AS salaries,       -- 16055
@@ -167,11 +171,28 @@ ROLLBACK;
 ## Offline checks performed
 
 - Ruby syntax for the helper: PASS.
-- Six database-free RSpec examples: PASS (configuration, target/TLS rejection, all-table empty checks,
-  SELECT/SHOW-only preflight, offline subprocess mode and credential-safe errors).
+- Eight database-free RSpec examples: PASS (configuration, target/TLS rejection, all-table empty checks,
+  SELECT/SHOW-only preflight, offline subprocess mode and credential-safe errors). Client-TLS
+  regressions cover encrypted client/proxy-backend false SSL, and inactive/unknown client TLS
+  even if server-side SSL would be true. Wrong targets and nonempty-table cases remain covered.
 - RuboCop on both new Ruby files: 2 files, 0 offenses.
 - YAML parsing/static policy assertions and Bash syntax: PASS. Dispatch-only input, repository/main
   restriction, read-only permissions, concurrency, production environment, lockfile/Ruby source and
   absence of seed retries checked. `actionlint` is not installed and was not claimed to run.
 - No application features, salary rules, seed logic, migrations, dependency manifests or lockfiles
   changed. No production seed, GitHub dispatch, commit or push performed.
+
+### TLS verification correction
+
+The initial implementation gated on `pg_stat_ssl`, which describes the PostgreSQL server's peer
+rather than the Rails client's TLS session through Neon's proxy. This produced a false refusal
+after URL validation. The corrected helper checks `raw_connection.ssl_in_use? == true` in both
+preflights. An inactive/unknown status or unavailable driver API still stops execution; URL TLS
+requirements, hostname/database matching, transaction locks and empty checks remain mandatory.
+
+The reported TLS failure occurs before invoking the seed task. After the owner publishes this
+correction, the workflow is ready for another manual attempt with the existing required secrets
+and confirmation; no hosted success is inferred from offline tests. A changed/nonempty target
+will still be refused. No database connection or production seed was performed for this fix.
+
+Driver reference: [PG::Connection#ssl_in_use?](https://www.rubydoc.info/gems/pg/PG/Connection#ssl_in_use%3F-instance_method).

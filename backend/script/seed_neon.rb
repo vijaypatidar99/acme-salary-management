@@ -45,7 +45,8 @@ module NeonSeed
     check!(connection.select_value("SELECT current_schema()") == "public", "Expected the public application schema.")
     check!(connection.select_value("SELECT current_database()") == "neondb", "Connected database is not neondb.")
     check!(connection.raw_connection.host == expected_host, "Connected host does not match the expected Neon hostname.")
-    check!(connection.select_value("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()") == true, "The database session is not using TLS.")
+    # Neon terminates client TLS at its proxy; pg_stat_ssl describes the backend hop.
+    check!(connection.raw_connection.ssl_in_use? == true, "The PostgreSQL client connection is not using TLS.")
     check!(connection.select_value("SHOW server_version_num").to_i.between?(180000, 189999), "Expected PostgreSQL major version 18.")
     TABLES.each do |table|
       check!(!connection.select_value("SELECT to_regclass('public.#{table}')").nil?, "Required application tables are missing; migrate separately.")
