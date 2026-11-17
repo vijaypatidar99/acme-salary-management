@@ -8,7 +8,7 @@ describe('StatusPage API status', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    renderRoute('/')
+    renderRoute('/status')
 
     expect(await screen.findByText('reachable')).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(`${API_BASE_URL}/up`, expect.anything())
@@ -17,7 +17,7 @@ describe('StatusPage API status', () => {
   it('reports the API as unreachable when the request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
 
-    renderRoute('/')
+    renderRoute('/status')
 
     expect(await screen.findByText('unreachable')).toBeInTheDocument()
   })
@@ -25,7 +25,7 @@ describe('StatusPage API status', () => {
   it('reports the API as unreachable on a non-2xx response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 500 })))
 
-    renderRoute('/')
+    renderRoute('/status')
 
     expect(await screen.findByText('unreachable')).toBeInTheDocument()
   })

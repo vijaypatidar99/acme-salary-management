@@ -1,0 +1,324 @@
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it } from 'vitest'
+import { renderRoute } from './renderRoute'
+import { analytics, apiFailure, employee, jsonResponse, mockApi, salary } from './fixtures'
+
+const callsTo = (mock: ReturnType<typeof mockApi>, path: string) => mock.mock.calls.filter(([input]) => new URL(String(input)).pathname.endsWith(path))
+async function fillRevision() {
+  const user = userEvent.setup()
+  await screen.findByRole('button', { name: 'Save salary revision' })
+  await user.clear(screen.getByLabelText(/New salary amount/))
+  await user.type(screen.getByLabelText(/New salary amount/), '270000.00')
+  await user.type(screen.getByLabelText(/Revision reason/), '  Annual review  ')
+  await user.type(screen.getByLabelText('Demo write key'), 'memory-only-test-key')
+  return user
+}
+
+describe('employee directory', () => {
+  it('renders server records, pay strings, count and URL-backed filters', async () => {
+    mockApi()
+    const { router } = renderRoute('/employees?country=IN&page=2')
+    expect(await screen.findByRole('link', { name: /Asha Rao/ })).toHaveAttribute('href', '/employees/42')
+    expect(screen.getByText('INR 250,000.00')).toBeInTheDocument()
+    expect(screen.getByText(/Page 2 of 3/)).toBeInTheDocument()
+    await userEvent.selectOptions(screen.getByLabelText('Department'), '3')
+    expect(router.state.location.search).toContain('department=3')
+    expect(router.state.location.search).not.toContain('page=')
+    expect(router.state.location.search).toContain('country=IN')
+  })
+  it('preserves the directory URL through profile, revision and cancel navigation', async () => {
+    mockApi()
+    const { router } = renderRoute('/employees?country=IN&page=2')
+    await userEvent.click(await screen.findByRole('link', { name: /Asha Rao/ }))
+    await userEvent.click(await screen.findByRole('link', { name: /Revise salary/ }))
+    await userEvent.click(await screen.findByRole('link', { name: 'Cancel' }))
+    await userEvent.click(await screen.findByRole('link', { name: '← Back to employees' }))
+    expect(router.state.location.search).toContain('country=IN')
+    expect(router.state.location.search).toContain('page=2')
+  })
+  it('debounces search and sends it through the URL without requesting every keystroke', async () => {
+    const fetch = mockApi()
+    const { router } = renderRoute('/employees')
+    await screen.findByText('Asha Rao')
+    await userEvent.type(screen.getByRole('searchbox'), 'Asha')
+    await waitFor(() => expect(router.state.location.search).toContain('q=Asha'))
+    await waitFor(() => expect(callsTo(fetch, '/employees').length).toBe(2))
+  })
+  it('keeps country filters on pagination and sends supported sorting', async () => {
+    const fetch = mockApi()
+    const { router } = renderRoute('/employees?country=IN')
+    await screen.findByText('Asha Rao')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(router.state.location.search).toContain('page=2'))
+    expect(router.state.location.search).toContain('country=IN')
+    await userEvent.selectOptions(screen.getByLabelText('Sort by'), 'annual_base_reporting')
+    await userEvent.selectOptions(screen.getByLabelText('Direction'), 'desc')
+    await waitFor(() => expect(callsTo(fetch, '/employees').at(-1)?.[0].toString()).toContain('direction=desc'))
+    expect(router.state.location.search).not.toContain('page=')
+    const url = new URL(screen.getByRole('link', { name: /Export CSV/ }).getAttribute('href')!)
+    expect(url.searchParams.get('country')).toBe('IN')
+    expect(url.searchParams.get('sort')).toBe('annual_base_reporting')
+    expect(url.searchParams.has('page')).toBe(false)
+  })
+  it('handles empty results and malformed deep-link filter errors', async () => {
+    mockApi((url) => url.pathname.endsWith('/employees') ? jsonResponse({ data: [], meta: { page: 1, per_page: 25, total_count: 0, total_pages: 0, reporting_currency: 'USD' } }) : undefined)
+    const view = renderRoute('/employees')
+    expect(await screen.findByRole('heading', { name: 'No employees on this page' })).toBeInTheDocument()
+    view.unmount()
+    mockApi((url) => url.pathname.endsWith('/employees') ? apiFailure(400, 'invalid_parameter') : undefined)
+    renderRoute('/employees?sort=unsupported')
+    expect(await screen.findByRole('alert')).toHaveTextContent('These filters are not valid')
+    await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+  })
+  it('handles reference-data failure without losing the employee list', async () => {
+    mockApi((url) => url.pathname.endsWith('/reference_data') ? apiFailure(500, 'internal_error') : undefined)
+    renderRoute('/employees')
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not load')
+    expect(await screen.findByText('Asha Rao')).toBeInTheDocument()
+  })
+})
+
+describe('employee profiles and salary history', () => {
+  it('shows newest-first readonly history and exact timestamp/FX strings', async () => {
+    mockApi()
+    renderRoute('/employees/42')
+    expect(await screen.findByRole('heading', { name: 'Asha Rao' })).toBeInTheDocument()
+    const table = screen.getByRole('table', { name: /Complete salary history/ })
+    const rows = within(table).getAllByRole('row')
+    expect(rows[1]).toHaveTextContent('250,000.00')
+    expect(rows[2]).toHaveTextContent('230,000.00')
+    expect(rows[1]).toHaveTextContent('09:00:00.123456 UTC')
+    expect(rows[1]).toHaveTextContent('0.01200000')
+    expect(within(table).queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Revise salary/ })).toBeInTheDocument()
+  })
+  it('labels terminated compensation as last held and hides the revision action', async () => {
+    mockApi((url) => url.pathname.endsWith('/employees/42') ? jsonResponse({ data: { ...employee, employment_status: 'terminated', terminated_on: '2026-01-01', can_revise_salary: false } }) : undefined)
+    renderRoute('/employees/42')
+    expect(await screen.findByRole('heading', { name: 'Last salary held' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Revise salary/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/excluded from active compensation totals and cannot be revised/)).toBeInTheDocument()
+  })
+  it('allows an on-leave employee to be revised while explaining active-total exclusion', async () => {
+    mockApi((url) => url.pathname.endsWith('/employees/42') ? jsonResponse({ data: { ...employee, employment_status: 'on_leave' } }) : undefined)
+    renderRoute('/employees/42')
+    expect(await screen.findByRole('link', { name: /Revise salary/ })).toBeInTheDocument()
+    expect(screen.getByText(/Salary revisions are allowed while on leave/)).toBeInTheDocument()
+  })
+  it('handles an unknown employee and a global unknown route', async () => {
+    mockApi()
+    const view = renderRoute('/employees/999')
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be found')
+    view.unmount()
+    renderRoute('/unknown-page')
+    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+  })
+})
+
+describe('dashboard', () => {
+  it('uses API statistics, headcounts and local totals without invented salary arithmetic', async () => {
+    mockApi()
+    renderRoute('/')
+    const summary = await screen.findByRole('region', { name: 'Compensation summary' })
+    expect(summary).toHaveTextContent('USD 126,000.00')
+    expect(summary).toHaveTextContent('USD 63,000.00')
+    expect(screen.getByText(/4 employees in this selection/)).toBeInTheDocument()
+    expect(screen.getAllByText('Small sample')).toHaveLength(2)
+    expect(screen.getByText('INR 10,500,000.00')).toBeInTheDocument()
+    expect(screen.getByText(/not compa-ratios/)).toBeInTheDocument()
+  })
+  it('filters the whole dashboard using server-supported country, department and job level', async () => {
+    const fetch = mockApi()
+    const { router } = renderRoute('/')
+    await screen.findByRole('region', { name: 'Compensation summary' })
+    await userEvent.selectOptions(screen.getByLabelText('Country'), 'IN')
+    await userEvent.selectOptions(screen.getByLabelText('Department'), '3')
+    await userEvent.selectOptions(screen.getByLabelText('Job level'), '4')
+    await waitFor(() => expect(callsTo(fetch, '/analytics/summary').at(-1)?.[0].toString()).toContain('job_level=4'))
+    expect(router.state.location.search).toContain('country=IN')
+    expect(router.state.location.search).toContain('department=3')
+  })
+  it('shows empty groups with zero total and unavailable mean/median', async () => {
+    mockApi((url) => url.pathname.endsWith('/analytics/summary') ? jsonResponse({ data: { ...analytics, organization: { active_headcount: 0, total_annual_base_reporting: '0.00', average_annual_base_reporting: null, median_annual_base_reporting: null, status_counts: { active: 0, on_leave: 1, terminated: 0 } }, by_country: [], by_department: [] } }) : undefined)
+    renderRoute('/')
+    expect(await screen.findByRole('heading', { name: 'No active employees in this selection' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Compensation summary' })).toHaveTextContent('USD 0.00')
+    expect(within(screen.getByRole('region', { name: 'Compensation summary' })).getAllByText('—')).toHaveLength(2)
+  })
+  it('shows loading and API error states with a retry', async () => {
+    mockApi((url) => url.pathname.endsWith('/analytics/summary') ? new Promise(() => {}) : undefined)
+    const view = renderRoute('/')
+    expect(await screen.findByText('Loading compensation overview…')).toBeInTheDocument()
+    view.unmount()
+    mockApi((url) => url.pathname.endsWith('/analytics/summary') ? apiFailure(500, 'internal_error') : undefined)
+    renderRoute('/')
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not load')
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+})
+
+describe('salary revisions', () => {
+  it('requires reason/key and rejects invalid amount strings without a POST', async () => {
+    const fetch = mockApi()
+    renderRoute('/employees/42/revise')
+    await screen.findByRole('button', { name: 'Save salary revision' })
+    await userEvent.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    expect(screen.getByText('Enter a revision reason.')).toBeInTheDocument()
+    expect(screen.getByText(/Enter the demo write key/)).toBeInTheDocument()
+    for (const value of ['0.00', '1e5', '10.005', '1000000000.01']) {
+      fireEvent.change(screen.getByLabelText(/New salary amount/), { target: { value } })
+      fireEvent.submit(screen.getByRole('button', { name: 'Save salary revision' }).closest('form')!)
+      expect(screen.getByLabelText(/New salary amount/)).toHaveAttribute('aria-invalid', 'true')
+    }
+    expect(callsTo(fetch, '/salary_revisions')).toHaveLength(0)
+    expect(screen.queryByRole('option', { name: /JPY/ })).not.toBeInTheDocument()
+  })
+  it('sends strings, a trimmed reason and the exact concurrency token, then refreshes detail/list/analytics', async () => {
+    let detail = structuredClone(employee)
+    const fetch = mockApi((url, init) => {
+      if (url.pathname.endsWith('/employees/42')) return jsonResponse({ data: detail })
+      if (url.pathname.endsWith('/salary_revisions')) {
+        const body = JSON.parse(init!.body as string).salary_revision
+        const updated = { ...salary, id: 9150, amount: body.amount, annual_base_reporting: '38880.00', reason: body.reason }
+        const previous = { ...salary, effective_to: '2026-11-17T09:30:00.123456Z', is_current: false }
+        detail = { ...detail, current_salary: updated, salary_history: [updated, previous] }
+        return jsonResponse({ data: { employee_id: 42, current_salary: updated, previous_salary: previous, reporting_currency: 'USD' } }, 201)
+      }
+    })
+    const { client } = renderRoute('/employees/42/revise')
+    client.setQueryDefaults(['employees'], { gcTime: Infinity })
+    client.setQueryDefaults(['analytics'], { gcTime: Infinity })
+    client.setQueryData(['employees', {}], { data: [] })
+    client.setQueryData(['analytics', {}], analytics)
+    const user = await fillRevision()
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    expect(await screen.findByText('Salary revision saved.')).toBeInTheDocument()
+    const [, options] = callsTo(fetch, '/salary_revisions')[0]
+    expect(JSON.parse(options!.body as string)).toEqual({ salary_revision: { amount: '270000.00', currency: 'INR', pay_frequency: 'monthly', reason: 'Annual review', expected_current_salary_record_id: 9001 } })
+    expect((options!.headers as Record<string, string>).Authorization).toBe('Bearer memory-only-test-key')
+    expect(callsTo(fetch, '/employees/42').length).toBeGreaterThan(1)
+    expect(client.getQueryState(['employees', {}])?.isInvalidated).toBe(true)
+    expect(client.getQueryState(['analytics', {}])?.isInvalidated).toBe(true)
+    expect(screen.getAllByText('INR 270,000.00').length).toBeGreaterThan(0)
+  })
+  it('retains the key across in-app navigation and clears it after a 401', async () => {
+    mockApi((url) => url.pathname.endsWith('/salary_revisions') ? apiFailure(401, 'unauthorized') : undefined)
+    renderRoute('/employees/42/revise')
+    const user = await fillRevision()
+    await user.click(screen.getByRole('link', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('link', { name: /Revise salary/ }))
+    expect(await screen.findByLabelText('Demo write key')).toHaveValue('memory-only-test-key')
+    await user.type(screen.getByLabelText(/Revision reason/), 'Review')
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('write key was not accepted')
+    expect(screen.getByLabelText('Demo write key')).toHaveValue('')
+    expect(localStorage.length).toBe(0)
+    expect(sessionStorage.length).toBe(0)
+  })
+  it('hides the form on 403 and does not retry a denied write', async () => {
+    const fetch = mockApi((url) => url.pathname.endsWith('/salary_revisions') ? apiFailure(403, 'writes_disabled') : undefined)
+    renderRoute('/employees/42/revise')
+    const user = await fillRevision()
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Editing is disabled on this server')
+    expect(screen.queryByLabelText(/New salary amount/)).not.toBeInTheDocument()
+    expect(callsTo(fetch, '/salary_revisions')).toHaveLength(1)
+  })
+  it('reloads a stale salary and requires an explicit review before sending a new token', async () => {
+    let stale = false
+    const fetch = mockApi((url) => {
+      if (url.pathname.endsWith('/employees/42')) return jsonResponse({ data: stale ? { ...employee, current_salary: { ...salary, id: 9999, amount: '260000.00' } } : employee })
+      if (url.pathname.endsWith('/salary_revisions')) { stale = true; return apiFailure(409, 'stale_salary_record', { current_salary_record_id: 9999 }) }
+    })
+    renderRoute('/employees/42/revise')
+    const user = await fillRevision()
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    const review = await screen.findByRole('button', { name: 'Review latest salary and reset form' })
+    expect(screen.getByRole('button', { name: 'Save salary revision' })).toBeDisabled()
+    await waitFor(() => expect(review).toBeEnabled())
+    await user.click(review)
+    expect(screen.getByLabelText(/New salary amount/)).toHaveValue('260000.00')
+    await user.type(screen.getByLabelText(/Revision reason/), 'Reviewed again')
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    await waitFor(() => expect(callsTo(fetch, '/salary_revisions')).toHaveLength(2))
+    expect(JSON.parse(callsTo(fetch, '/salary_revisions')[1][1]!.body as string).salary_revision.expected_current_salary_record_id).toBe(9999)
+  })
+  it.each([
+    ['missing_exchange_rate', 422, 'No applicable FX rate'], ['no_change', 422, 'reason-only edit'],
+    ['revision_conflict', 409, 'conflicts with the salary history'], ['invalid_request', 400, 'could not accept this request'],
+    ['internal_error', 500, 'could not confirm the revision'], ['employee_not_eligible', 422, 'no longer eligible'],
+  ])('handles %s without automatically repeating the POST', async (code, status, expected) => {
+    const fetch = mockApi((url) => url.pathname.endsWith('/salary_revisions') ? apiFailure(status, code) : undefined)
+    renderRoute('/employees/42/revise')
+    const user = await fillRevision()
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+    expect(callsTo(fetch, '/salary_revisions')).toHaveLength(1)
+  })
+  it('renders API field errors', async () => {
+    mockApi((url) => url.pathname.endsWith('/salary_revisions') ? apiFailure(422, 'validation_failed', { amount: ['is outside the accepted limit'], reason: ['is invalid'] }) : undefined)
+    renderRoute('/employees/42/revise')
+    const user = await fillRevision()
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    expect(await screen.findByText('is outside the accepted limit')).toBeInTheDocument()
+    expect(screen.getByLabelText(/New salary amount/)).toHaveAttribute('aria-invalid', 'true')
+  })
+  it('prevents duplicate submits while a request is in flight', async () => {
+    const fetch = mockApi((url) => url.pathname.endsWith('/salary_revisions') ? new Promise(() => {}) : undefined)
+    renderRoute('/employees/42/revise')
+    await fillRevision()
+    const form = screen.getByRole('button', { name: 'Save salary revision' }).closest('form')!
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+    await waitFor(() => expect(callsTo(fetch, '/salary_revisions')).toHaveLength(1))
+    expect(screen.getByRole('button', { name: 'Saving revision…' })).toBeDisabled()
+  })
+  it('prevents revisions through a direct URL for an ineligible employee', async () => {
+    mockApi((url) => url.pathname.endsWith('/employees/42') ? jsonResponse({ data: { ...employee, employment_status: 'terminated', can_revise_salary: false } }) : undefined)
+    renderRoute('/employees/42/revise')
+    expect(await screen.findByText(/not eligible for salary revisions/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save salary revision' })).not.toBeInTheDocument()
+  })
+
+  it('requires an available currency when the retained salary has no usable FX rate', async () => {
+    mockApi((url) => url.pathname.endsWith('/employees/42') ? jsonResponse({ data: { ...employee, current_salary: { ...salary, currency: 'JPY' } } }) : undefined)
+    renderRoute('/employees/42/revise')
+    await screen.findByRole('button', { name: 'Save salary revision' })
+    expect(screen.getByLabelText('Currency')).toHaveValue('')
+    await userEvent.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    expect(screen.getByText('Choose a currency with an available FX rate.')).toBeInTheDocument()
+  })
+  it('allows the maximum decimal-string amount and keeps key clearing accessible', async () => {
+    const fetch = mockApi((url) => url.pathname.endsWith('/salary_revisions') ? apiFailure(422, 'no_change') : undefined)
+    renderRoute('/employees/42/revise')
+    const user = await fillRevision()
+    fireEvent.change(screen.getByLabelText(/New salary amount/), { target: { value: '1000000000.00' } })
+    await user.click(screen.getByRole('button', { name: 'Save salary revision' }))
+    await screen.findByRole('alert')
+    expect(JSON.parse(callsTo(fetch, '/salary_revisions')[0][1]!.body as string).salary_revision.amount).toBe('1000000000.00')
+    await user.click(screen.getByRole('button', { name: 'Forget write key' }))
+    expect(screen.getByLabelText('Demo write key')).toHaveValue('')
+  })
+  it('does not restore a key after the application is remounted', async () => {
+    mockApi()
+    const view = renderRoute('/employees/42/revise')
+    await fillRevision()
+    view.unmount()
+    renderRoute('/employees/42/revise')
+    expect(await screen.findByLabelText('Demo write key')).toHaveValue('')
+  })
+})
+
+describe('shared navigation', () => {
+  it('marks the active navigation and supports history navigation', async () => {
+    mockApi()
+    const { router } = renderRoute('/employees')
+    await screen.findByText('Asha Rao')
+    expect(screen.getByRole('link', { name: 'Employees' })).toHaveAttribute('aria-current', 'page')
+    await userEvent.click(screen.getByRole('link', { name: 'Overview' }))
+    expect(await screen.findByRole('heading', { name: 'Compensation overview' })).toBeInTheDocument()
+    await act(async () => { await router.navigate(-1) })
+    expect(await screen.findByRole('heading', { name: 'Employee directory' })).toBeInTheDocument()
+  })
+})

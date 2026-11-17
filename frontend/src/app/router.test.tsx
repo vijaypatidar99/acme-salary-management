@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderRoute } from '../test/renderRoute'
 
 describe('routes', () => {
-  it('renders the home page at /', async () => {
+  it('renders the API status page at /status', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
 
-    renderRoute('/')
+    renderRoute('/status')
 
     expect(screen.getByRole('heading', { name: 'ACME Salary Management' })).toBeInTheDocument()
     expect(await screen.findByText('reachable')).toBeInTheDocument()

@@ -3,11 +3,13 @@
 Web app for an ACME HR Manager to find employee compensation records, revise base salaries
 without losing history, and see how base pay is distributed across 10,000 synthetic employees.
 
-**Status: backend feature code present, frontend scaffold only.** The Rails API (employees, salary revisions,
-analytics, CSV export, reference data, deterministic 10,000-employee seed) code and specs are
-present; database tests could not run in the current audit. The React app is still the scaffold.
-Low-risk defaults are decided under delegated authority (register §3), while owner gate sign-off
-and hosted verification remain outstanding. Gate G1 is OPEN. See the [audit report](docs/audit-report.md).
+**Status: backend and frontend MVP implemented and locally verified.** The React app now includes
+compensation analytics, employee search/filter/pagination, profiles and salary history, protected
+salary revisions and CSV export, connected to the Rails API. The frontend check passes 44 tests;
+actual local browser workflows were verified on a disposable 10,000-employee database.
+See the [frontend review](docs/frontend-review.md) and [backend review](docs/backend-review.md).
+**G1 remains OPEN**: hosted DR-20 verification and owner gate sign-off remain outstanding;
+application hosting and production CORS remain DR-22.
 Scope, rules and phases are in [`docs/`](docs):
 start with [`requirements.md`](docs/requirements.md) and
 [`implementation-plan.md`](docs/implementation-plan.md). Decisions still awaiting the owner are
@@ -45,7 +47,7 @@ are public in the built bundle.
 ```sh
 make check            # everything below
 make backend-check    # bin/ci: RuboCop, bundler-audit (network), Brakeman, RSpec
-make frontend-check   # typecheck, ESLint, Vitest, production build
+VITE_API_BASE_URL=http://localhost:3000 make frontend-check  # typecheck, lint, tests, configured build
 ```
 
 No hosted CI, Docker or deployment configuration exists; those belong to Phase 11 and need
