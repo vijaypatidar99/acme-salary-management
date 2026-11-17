@@ -18,14 +18,19 @@ Rails.application.configure do
   # Enable serving of images, stylesheets, and JavaScripts from an asset server.
   # config.asset_host = "http://assets.example.com"
 
-  # Assume all access to the app is happening through a SSL-terminating reverse proxy.
-  # config.assume_ssl = true
+  # All supported platforms (Render, Railway, Fly.io) terminate TLS at their edge proxy and forward
+  # requests to the Rails process over HTTP on an internal network. `assume_ssl` tells Rails to treat
+  # every incoming request as HTTPS (sets `request.ssl? = true`, adds Strict-Transport-Security),
+  # without issuing an http→https redirect that would loop on the internal connection.
+  #
+  # Do NOT enable `force_ssl` here: that adds a redirect middleware that fires before the proxy
+  # strips the original scheme, causing an infinite redirect loop on platforms that forward plain
+  # HTTP internally. TLS enforcement is the platform edge's responsibility; Rails enforces it only
+  # through HSTS (which `assume_ssl` already sets).
+  config.assume_ssl = true
 
-  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  # config.force_ssl = true
-
-  # Skip http-to-https redirect for the default health check endpoint.
-  # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  # Strict-Transport-Security is sent automatically by `assume_ssl`. No separate ssl_options line
+  # is needed. The /up health check is exempt from HSTS by default.
 
   # Log to STDOUT with the current request id as a default log tag.
   config.log_tags = [ :request_id ]
@@ -50,12 +55,15 @@ Rails.application.configure do
   # Only use :id for inspections in production.
   config.active_record.attributes_for_inspect = [ :id ]
 
-  # Enable DNS rebinding protection and other `Host` header attacks.
-  # config.hosts = [
-  #   "example.com",     # Allow requests from example.com
-  #   /.*\.example\.com/ # Allow requests from subdomains like `www.example.com`
-  # ]
-  #
-  # Skip DNS rebinding protection for the default health check endpoint.
-  # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  # DNS rebinding protection: restrict the Host header to the declared API origin.
+  # Set RAILS_ALLOWED_HOSTS in the platform environment to the actual backend hostname, e.g.:
+  #   RAILS_ALLOWED_HOSTS=acme-api.onrender.com
+  # Multiple hosts: comma-separate them. Leave unset (or set to "") to skip the check during
+  # initial deployment smoke-testing, then lock it down before sharing the write key.
+  if (hosts_env = ENV.fetch("RAILS_ALLOWED_HOSTS", "")).present?
+    config.hosts = hosts_env.split(",").map(&:strip)
+    # Health-check requests from the platform itself may use an internal IP or the container
+    # hostname rather than the public domain; exclude /up so deploys do not stall.
+    config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  end
 end
