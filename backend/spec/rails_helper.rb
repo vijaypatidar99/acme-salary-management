@@ -1,8 +1,18 @@
+require_relative "test_database_safety"
+begin
+  TestDatabaseSafety.configure!
+rescue TestDatabaseSafety::UnsafeTarget => error
+  abort error.message
+end
 require "spec_helper"
-ENV["RAILS_ENV"] ||= "test"
+require_relative "../config/boot"
+require "active_record"
+require "active_record/connection_adapters/postgresql_adapter"
+ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.singleton_class.prepend(TestDatabaseSafety::ConnectionGuard)
 require_relative "../config/environment"
-# Prevent database truncation if the environment is production
-abort("The Rails environment is running in production mode!") if Rails.env.production?
+abort "RSpec requires the Rails test environment" unless Rails.env.test?
+# Force identity validation before schema maintenance or any fixture hooks run.
+ActiveRecord::Base.connection_pool.with_connection(&:verify!)
 require "rspec/rails"
 
 # Support code (helpers) lives in spec/support.

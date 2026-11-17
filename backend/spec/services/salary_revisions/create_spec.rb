@@ -44,6 +44,20 @@ RSpec.describe SalaryRevisions::Create do
     expect(current.reload.effective_to).to be_nil
   end
 
+  describe "reason character boundaries" do
+    [ "x", "x" * 255, "😀" * 255, "  😀  " ].each do |reason|
+      it "accepts #{reason.length} Ruby characters with surrounding ASCII whitespace stripped" do
+        expect(revise(reason: reason).current_salary.reason).to eq(reason.strip)
+      end
+    end
+    [ "", " \t\n ", "x" * 256, "😀" * 256 ].each do |reason|
+      it "rejects invalid reason length #{reason.length} without writing" do
+        expect_domain_error("validation_failed") { revise(reason: reason) }
+        expect_nothing_written
+      end
+    end
+  end
+
   describe "a successful revision" do
     it "closes the previous record and creates the new one with the same timestamp" do
       result = revise

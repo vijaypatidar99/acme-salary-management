@@ -63,7 +63,7 @@ RSpec.describe Employees::CsvExport do
     it "keeps a negative number in a numeric column intact and writes NULL dates as empty fields" do
       employee = CsvFakeEmployee.new({ "salary_amount" => BigDecimal("-100.00"), "annual_base_local" => BigDecimal("-1200"),
                                   "salary_fx_rate" => BigDecimal("0.012"), "annual_base_reporting" => BigDecimal("-14.40"),
-                                  "salary_effective_from" => Time.utc(2025, 4, 1), "salary_currency" => "INR",
+                                  "salary_effective_from" => Time.utc(2025, 4, 1, 0, 0, 0, 123_456), "salary_currency" => "INR",
                                   "salary_pay_frequency" => "monthly", "department_name" => "Engineering", "country_name" => "India" })
       directory = instance_double(Employees::Directory)
       allow(directory).to receive(:each_batch).and_yield([ employee ])
@@ -71,7 +71,7 @@ RSpec.describe Employees::CsvExport do
       header, row = described_class.new(directory).each_line.to_a
 
       expect(header).to eq("#{described_class::COLUMNS.map(&:first).join(',')}\r\n")
-      expect(row).to eq("ACME-1,A,B,Engineering,IN,India,T,3,active,2019-04-01,,-100.00,INR,monthly,-1200.00,0.01200000,-14.40,2025-04-01T00:00:00Z\r\n")
+      expect(row).to eq("ACME-1,A,B,Engineering,IN,India,T,3,active,2019-04-01,,-100.00,INR,monthly,-1200.00,0.01200000,-14.40,2025-04-01T00:00:00.123456Z\r\n")
     end
   end
 end

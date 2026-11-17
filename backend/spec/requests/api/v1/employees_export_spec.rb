@@ -58,7 +58,7 @@ RSpec.describe "GET /api/v1/employees/export.csv", type: :request do
       "employment_status" => "active", "hired_on" => "2019-04-01", "terminated_on" => "",
       "salary_amount" => "250000.00", "salary_currency" => "INR", "pay_frequency" => "monthly",
       "annual_base_local" => "3000000.00", "fx_rate_to_usd" => "0.01200000", "annual_base_usd" => "36000.00",
-      "salary_effective_from" => "2024-01-01T09:00:00Z"
+      "salary_effective_from" => "2024-01-01T09:00:00.000000Z"
     )
   end
 

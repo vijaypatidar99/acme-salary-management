@@ -45,6 +45,57 @@ describe('employee directory', () => {
     await waitFor(() => expect(router.state.location.search).toContain('q=Asha'))
     await waitFor(() => expect(callsTo(fetch, '/employees').length).toBe(2))
   })
+  it('keeps focus when pausing and continuing search, and synchronizes back/forward and clear', async () => {
+    mockApi()
+    const { router } = renderRoute('/employees')
+    const input = await screen.findByRole('searchbox')
+    await userEvent.type(input, 'Ash')
+    await waitFor(() => expect(router.state.location.search).toContain('q=Ash'))
+    expect(input).toHaveFocus()
+    await userEvent.type(input, 'a')
+    await waitFor(() => expect(router.state.location.search).toContain('q=Asha'))
+    expect(input).toHaveFocus()
+    await act(async () => { await router.navigate(-1) })
+    expect(input).toHaveValue('Ash')
+    await act(async () => { await router.navigate(1) })
+    expect(input).toHaveValue('Asha')
+    await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(input).toHaveValue('')
+    expect(router.state.location.search).toBe('')
+  })
+  it('retains an unfinished draft and current filters when paging or filters change', async () => {
+    mockApi()
+    const { router } = renderRoute('/employees')
+    const input = await screen.findByRole('searchbox')
+    await screen.findByLabelText('Country')
+    fireEvent.change(input, { target: { value: 'Asha' } })
+    await userEvent.selectOptions(screen.getByLabelText('Country'), 'IN')
+    expect(input).toHaveValue('Asha')
+    await waitFor(() => expect(router.state.location.search).toContain('q=Asha'))
+    expect(router.state.location.search).toContain('country=IN')
+    await screen.findByRole('button', { name: 'Next' })
+    fireEvent.change(input, { target: { value: 'Rao' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(input).toHaveValue('Rao')
+    await waitFor(() => expect(router.state.location.search).toContain('q=Rao'))
+    expect(router.state.location.search).toContain('country=IN')
+    expect(router.state.location.search).not.toContain('page=')
+  })
+  it('shows no page fraction for zero matches, retains beyond-last recovery and resets filters', async () => {
+    mockApi((url) => url.pathname.endsWith('/employees') ? jsonResponse({ data: [], meta: { page: 1, per_page: 25, total_count: 0, total_pages: 0, reporting_currency: 'USD' } }) : undefined)
+    const view = renderRoute('/employees?q=missing')
+    await screen.findByRole('heading', { name: 'No employees on this page' })
+    expect(screen.queryByText(/Page 1 of 0/)).not.toBeInTheDocument()
+    expect(screen.getByText('0 employees')).toBeInTheDocument()
+    view.unmount()
+    mockApi((url) => url.pathname.endsWith('/employees') ? jsonResponse({ data: [], meta: { page: 9, per_page: 25, total_count: 60, total_pages: 3, reporting_currency: 'USD' } }) : undefined)
+    const { router } = renderRoute('/employees?page=9')
+    await screen.findByText(/Page 9 of 3/)
+    await userEvent.click(screen.getByRole('button', { name: 'First page' }))
+    expect(router.state.location.search).toContain('page=1')
+    await userEvent.selectOptions(screen.getByLabelText('Country'), 'IN')
+    expect(router.state.location.search).not.toContain('page=')
+  })
   it('keeps country filters on pagination and sends supported sorting', async () => {
     const fetch = mockApi()
     const { router } = renderRoute('/employees?country=IN')
@@ -173,6 +224,24 @@ describe('salary revisions', () => {
     }
     expect(callsTo(fetch, '/salary_revisions')).toHaveLength(0)
     expect(screen.queryByRole('option', { name: /JPY/ })).not.toBeInTheDocument()
+  })
+  it.each([
+    ['', false], [' \t\n ', false], ['x', true], ['x'.repeat(255), true], ['x'.repeat(256), false],
+    ['😀'.repeat(255), true], ['😀'.repeat(256), false], ['  😀  ', true],
+  ])('validates reason codepoint boundaries without UTF-16 truncation (%#)', async (reason, valid) => {
+    const fetch = mockApi((url) => url.pathname.endsWith('/salary_revisions') ? apiFailure(422, 'no_change') : undefined)
+    renderRoute('/employees/42/revise')
+    await fillRevision()
+    fireEvent.change(screen.getByLabelText(/Revision reason/), { target: { value: reason } })
+    fireEvent.submit(screen.getByRole('button', { name: 'Save salary revision' }).closest('form')!)
+    if (valid) {
+      await waitFor(() => expect(callsTo(fetch, '/salary_revisions')).toHaveLength(1))
+      const sent = JSON.parse(callsTo(fetch, '/salary_revisions')[0][1]!.body as string).salary_revision.reason
+      expect(sent).toBe(reason.trim())
+    } else {
+      expect(screen.getByLabelText(/Revision reason/)).toHaveAttribute('aria-invalid', 'true')
+      expect(callsTo(fetch, '/salary_revisions')).toHaveLength(0)
+    }
   })
   it('sends strings, a trimmed reason and the exact concurrency token, then refreshes detail/list/analytics', async () => {
     let detail = structuredClone(employee)

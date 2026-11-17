@@ -23,7 +23,7 @@ module Employees
       [ "annual_base_local", :verbatim, ->(e) { DecimalString.call(e["annual_base_local"]) } ],
       [ "fx_rate_to_usd", :verbatim, ->(e) { DecimalString.call(e["salary_fx_rate"], scale: 8) } ],
       [ "annual_base_usd", :verbatim, ->(e) { DecimalString.call(e["annual_base_reporting"]) } ],
-      [ "salary_effective_from", :verbatim, ->(e) { e["salary_effective_from"]&.utc&.iso8601 } ]
+      [ "salary_effective_from", :verbatim, ->(e) { Timestamp.call(e["salary_effective_from"]) } ]
     ].freeze
 
     # Prefix a risky text value with an apostrophe so a spreadsheet does not run it as a formula.

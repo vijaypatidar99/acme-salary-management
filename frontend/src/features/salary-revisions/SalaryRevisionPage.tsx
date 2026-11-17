@@ -8,6 +8,14 @@ import { useWriteAccess } from '../../app/write-key-context'
 import { ErrorPanel, Loading } from '../../components/common/Feedback'
 import type { EmployeeDetail, ReferenceData } from '../../types/api'
 
+// Ruby String#strip removes these ASCII characters; count code points as Ruby String#length does.
+const rubyWhitespace = (char: string) => char === ' ' || '\0\t\n\v\f\r'.includes(char)
+const trimReason = (value: string) => {
+  const chars = [...value]
+  while (chars.length && rubyWhitespace(chars[0])) chars.shift()
+  while (chars.length && rubyWhitespace(chars[chars.length - 1])) chars.pop()
+  return chars.join('')
+}
 type Fields = Record<string, string>
 function inputErrors(amount: string, reason: string, currency: string, frequency: string, key: string): Fields {
   const errors: Fields = {}
@@ -15,8 +23,8 @@ function inputErrors(amount: string, reason: string, currency: string, frequency
   if (!/^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$/.test(amount)) errors.amount = 'Enter a decimal amount with at most two decimal places, without commas or spaces.'
   else if (/^0(?:\.0{1,2})?$/.test(amount)) errors.amount = 'Amount must be greater than zero.'
   else if (!/^(?:(?:0|[1-9][0-9]{0,8})(?:\.[0-9]{1,2})?|1000000000(?:\.0{1,2})?)$/.test(amount)) errors.amount = 'The maximum entered amount is 1,000,000,000.00 in the selected currency and pay period.'
-  if (!reason.trim()) errors.reason = 'Enter a revision reason.'
-  else if (reason.trim().length > 255) errors.reason = 'Use 255 characters or fewer.'
+  if (!trimReason(reason)) errors.reason = 'Enter a revision reason.'
+  else if ([...trimReason(reason)].length > 255) errors.reason = 'Use 255 characters or fewer.'
   if (!currency) errors.currency = 'Choose a currency with an available FX rate.'
   if (!frequency) errors.pay_frequency = 'Choose a pay frequency.'
   if (!key) errors.write_key = 'Enter the demo write key to authorize this revision.'
@@ -37,7 +45,7 @@ function RevisionForm({ employee, references, directorySearch }: { employee: Emp
   const [conflict, setConflict] = useState(false)
   const sending = useRef(false)
   const mutation = useMutation({
-    mutationFn: () => api.revise(employee.id, { amount, currency, pay_frequency: frequency, reason: reason.trim(), expected_current_salary_record_id: token }, access.writeKey),
+    mutationFn: () => api.revise(employee.id, { amount, currency, pay_frequency: frequency, reason: trimReason(reason), expected_current_salary_record_id: token }, access.writeKey),
     retry: false,
     onSuccess: async ({ data }) => {
       client.setQueryData<EmployeeDetail>(['employee', String(employee.id)], (old) => old ? {

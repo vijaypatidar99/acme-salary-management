@@ -8,16 +8,23 @@ import ReferenceFilters from '../../components/common/ReferenceFilters'
 import StatusBadge from '../../components/common/StatusBadge'
 
 const sorts = { employee_number: 'Employee ID', name: 'Name', country: 'Country', department: 'Department', job_level: 'Job level', hired_on: 'Hire date', status: 'Employment status', annual_base_reporting: 'Annual base pay · USD' }
-function SearchBox({ initial, search }: { initial: string; search: (value: string) => void }) {
-  const [draft, setDraft] = useState(initial)
+function SearchBox({ value, reset, search }: { value: string; reset: number; search: (value: string) => void }) {
+  const [state, setState] = useState({ url: value, reset, draft: value })
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(timer.current), [])
-  return <label className="search-label">Search employees<input type="search" placeholder="Search by name or employee ID" value={draft} maxLength={100} onChange={(e) => {
-    setDraft(e.target.value)
+  const latestSearch = useRef(search)
+  useEffect(() => { latestSearch.current = search }, [search])
+  // Synchronize actual search/back/clear changes, while retaining a draft on filter/page changes.
+  if (state.url !== value || state.reset !== reset) setState({ url: value, reset, draft: value })
+  useEffect(() => () => clearTimeout(timer.current), [value, reset])
+  return <label className="search-label">Search employees<input type="search" placeholder="Search by name or employee ID" value={state.draft} maxLength={100} onChange={(e) => {
+    const draft = e.target.value
+    setState((previous) => ({ ...previous, draft }))
     clearTimeout(timer.current)
-    timer.current = setTimeout(() => search(e.target.value.trim()), 300)
+    // Use current URL state if a filter/page changed while this draft was pending.
+    timer.current = setTimeout(() => latestSearch.current(draft.trim()), 300)
   }} /></label>
 }
+
 export default function DirectoryPage() {
   const [search, setSearch] = useSearchParams()
   const [reset, setReset] = useState(0)
@@ -36,7 +43,7 @@ export default function DirectoryPage() {
   return <>
     <header className="page-heading"><div><span className="eyebrow">People & compensation</span><h1>Employee directory</h1><p>Find a person. Understand their pay. Keep every change.</p></div><a className="button primary" href={api.exportUrl(params)}>↓ Export CSV</a></header>
     <section className="panel filter-panel" aria-label="Employee filters">
-      <div className="filter-row"><SearchBox key={`${search.toString()}-${reset}`} initial={params.q ?? ''} search={(value) => change('q', value)} />
+      <div className="filter-row"><SearchBox value={params.q ?? ''} reset={reset} search={(value) => change('q', value)} />
         {references.data && <ReferenceFilters data={references.data} params={params} change={change} />}
         <button className="button quiet" onClick={clear}>Clear filters</button></div>
       {references.isPending && <Loading text="Loading filter options…" />}
@@ -54,7 +61,7 @@ export default function DirectoryPage() {
           <td>{employee.current_salary ? <><span className="money">{money(employee.current_salary.amount, employee.current_salary.currency)}</span><small>{employee.current_salary.pay_frequency}{employee.employment_status === 'terminated' ? ' · last held' : ''}</small></> : 'Not available'}</td>
           <td className="numeric money">{money(employee.current_salary?.annual_base_reporting ?? null)}</td>
         </tr>)}</tbody></table></div>}
-        <div className="pagination"><span>Page {count(result.meta.page)} of {count(result.meta.total_pages)} · {count(result.meta.total_count)} employees</span><div className="pagination-actions">
+        <div className="pagination"><span>{result.meta.total_pages > 0 && <>Page {count(result.meta.page)} of {count(result.meta.total_pages)} · </>}{count(result.meta.total_count)} employees</span><div className="pagination-actions">
           <label>Rows per page<select value={params.per_page ?? '25'} onChange={(e) => change('per_page', e.target.value)}>{[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
           <button className="button secondary" disabled={result.meta.page <= 1} onClick={() => change('page', String(Math.max(1, result.meta.page - 1)))}>Previous</button>
           <button className="button secondary" disabled={result.meta.page >= result.meta.total_pages} onClick={() => change('page', String(result.meta.page + 1))}>Next</button>

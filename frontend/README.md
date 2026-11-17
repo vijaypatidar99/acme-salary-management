@@ -76,7 +76,21 @@ From the root:
 VITE_API_BASE_URL=http://localhost:3000 make frontend-check
 ```
 
-This runs `npm run typecheck`, `npm run lint`, `npm test` and `npm run build`. `npm run test:watch` is available for development. The final review passed 44 tests in 5 files, typecheck, lint and a configured production build. Browser integration also passed against the actual Rails/PostgreSQL service and its compiled frontend; see [`docs/frontend-review.md`](../docs/frontend-review.md).
+This runs `npm run typecheck`, `npm run lint`, `npm test` and `npm run build`. `npm run test:watch` is available for development. The final review passed 55 tests in 5 files, typecheck, lint and a configured production build. Browser integration also passed against the actual Rails/PostgreSQL service and its compiled frontend; see [`docs/frontend-review.md`](../docs/frontend-review.md).
+
+## Current local corrections and reproducible browser checks
+
+Search retains its input instance, keyboard focus and unfinished draft while filters/pages change;
+actual query/back/forward/clear changes synchronize deliberately. Empty results omit a zero-page
+fraction. Revision reasons use Ruby-compatible outer ASCII-whitespace trimming and Unicode
+codepoint counting (not grapheme clusters), with the backend still authoritative.
+
+See [`docs/local-browser-smoke.md`](../docs/local-browser-smoke.md) for the dependency-free native
+Chrome procedure, including disposable-only revisions/stale conflicts and 1,000-record history.
+`node script/local-smoke.mjs` defaults to GET-only mode against localhost; it never writes unless
+explicit disposable opt-in, a server key and the named QA fixture are all present. The actual QA
+results, accessible keyboard checks and limits are in
+[`docs/final-local-qa.md`](../docs/final-local-qa.md). No screen-reader certification is claimed.
 
 ## Implementation notes and limits
 
