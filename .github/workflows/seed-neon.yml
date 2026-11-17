@@ -1,0 +1,71 @@
+name: Seed Neon (one-time, empty database only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type SEED_NEON_10000 to seed the verified empty production database'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-neon-production
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    if: github.repository == 'vijaypatidar99/acme-salary-management' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    env:
+      RAILS_ENV: production
+      BUNDLE_FROZEN: 'true'
+      BUNDLE_WITHOUT: development:test
+    steps:
+      - name: Require confirmation and secrets
+        working-directory: .
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          NEON_EXPECTED_HOST: ${{ secrets.NEON_EXPECTED_HOST }}
+          SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != 'SEED_NEON_10000' ]]; then
+            echo '::error::Confirmation must be exactly SEED_NEON_10000.'
+            exit 1
+          fi
+          if [[ -z "$DATABASE_URL" || -z "$NEON_EXPECTED_HOST" || -z "$SECRET_KEY_BASE" ]]; then
+            echo '::error::Required Neon hostname, database URL or Rails boot secret is missing.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install repository Ruby and locked Bundler dependencies
+        uses: ruby/setup-ruby@v1
+        with:
+          working-directory: backend
+          ruby-version: .ruby-version
+          bundler-cache: true
+
+      - name: Preflight, seed once, and verify before commit
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          NEON_EXPECTED_HOST: ${{ secrets.NEON_EXPECTED_HOST }}
+          SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          ALLOW_PRODUCTION_SEED: '1'
+          RESET: ''
+          PGCONNECT_TIMEOUT: '20'
+          RAILS_LOG_LEVEL: error
+        run: bundle exec ruby script/seed_neon.rb
