@@ -1,0 +1,10 @@
+# OS and editor files (app-specific rules live in backend/.gitignore and frontend/.gitignore)
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Environment files; only *.example files are committed
+.env
+.env.*
+!.env.example

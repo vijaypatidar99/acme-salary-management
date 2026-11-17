@@ -1,7 +1,7 @@
 # API Contracts
 
 **Precedence:** rank 5 in the hierarchy defined in `architecture-review.md` §1; consistent with `domain-decisions.md` and `architecture.md`, which win on conflict.
-**Status:** Proposed — no endpoint exists yet. Items tagged **`[APPROVAL DR-nn]`** are pending decisions tracked only in the register (`architecture-review.md` §3). Where a tag appears, the text describes the recommended working default.
+**Status:** Pre-existing backend endpoint implementations and request specs are present. Their presence does not prove contract conformance or gate approval; database tests could not run in this audit (see `audit-report.md`). DR-01, DR-03, DR-04 and DR-11 were approved by the owner on 17 November 2026, and DR-05, DR-09, DR-12 and DR-14 were decided the same day under the owner's delegated authority (owner review pending); all are stated without tags. The remaining low-risk defaults were decided under the current delegation (see register); DR-22 and hosted verification remain open. Items still tagged **`[APPROVAL DR-nn]`** are pending decisions tracked only in the register (`architecture-review.md` §3); where a tag appears, the text describes the recommended working default.
 Base path: `/api/v1`.
 
 ## Conventions
@@ -13,7 +13,7 @@ Base path: `/api/v1`.
 - Reference identifiers: `country` = ISO alpha-2 code; `department` = numeric department id.
 
 ### Decimal-string format for `amount` (request)
-Defined once in `domain-decisions.md` §4.3. Summary: JSON **string** matching `^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$`; no sign, no exponent/scientific notation, no thousands separators, no leading zeros, no whitespace; at most two fractional digits; value `> 0`; value ≤ the approved upper bound **[APPROVAL DR-11 — exact number not yet chosen]**; values beyond column capacity get the same rejection (never a database error).
+Defined once in `domain-decisions.md` §4.3. Summary: JSON **string** matching `^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$`; no sign, no exponent/scientific notation, no thousands separators, no leading zeros, no whitespace; at most two fractional digits; value `> 0`; value ≤ `1000000000.00` (DR-11, approved: the *entered* amount in the salary's own currency and pay frequency, not a USD-converted value); values beyond column capacity get the same rejection (never a database error).
 - JSON **number** instead of string → `400 invalid_request`.
 - String with wrong syntax, >2 decimals, sign, exponent, zero, over bound/capacity → `422 validation_failed` with `details.amount`.
 
@@ -26,13 +26,13 @@ Defined once in `domain-decisions.md` §4.3. Summary: JSON **string** matching `
 | Status | Code | Condition |
 |--------|------|-----------|
 | 400 | `invalid_parameter` | Malformed/unsupported query parameter (bad `status`, `sort`, `direction`; `page` not a positive integer; `per_page` outside 1–100; unknown `country`/`department`; `q` too long; bad `job_level`) |
-| 400 | `invalid_request` | Request body missing, not valid JSON, missing the `salary_revision` object, a field has the wrong JSON type (e.g. `amount` is a number; a `null` field is treated as absent and reported as `422 validation_failed`), or — while DR-04 is mandatory — `expected_current_salary_record_id` is missing or not an integer |
+| 400 | `invalid_request` | Request body missing, not valid JSON, missing the `salary_revision` object, a field has the wrong JSON type (e.g. `amount` is a number; a `null` field is treated as absent and reported as `422 validation_failed`), or `expected_current_salary_record_id` is missing or not an integer (mandatory, DR-04) |
 | 401 | `unauthorized` | A write key is configured on the server and the request's key is missing or wrong |
 | 403 | `writes_disabled` | No write key is configured on the server (fail closed) |
 | 404 | `not_found` | Unknown employee or unknown route |
-| 409 | `stale_salary_record` | `expected_current_salary_record_id` ≠ the employee's current record id (someone else revised, or a double submit). Body includes `current_salary_record_id`. **Proposed mandatory behaviour, DR-04 `[APPROVAL]`** |
+| 409 | `stale_salary_record` | `expected_current_salary_record_id` ≠ the employee's current record id (someone else revised, or a double submit). Body includes `current_salary_record_id`. **Mandatory (DR-04, approved)** |
 | 409 | `revision_conflict` | The server's effective timestamp is not later than the current record's `effective_from` (clock skew; should not occur) |
-| 422 | `employee_not_eligible` | The employee's status does not allow salary revisions. Under the DR-03 working default: `terminated` is rejected; `active` and `on_leave` are allowed. Body `details.employment_status`. (The earlier name `employee_not_active` is obsolete.) |
+| 422 | `employee_not_eligible` | The employee's status does not allow salary revisions. Per DR-03 (approved): `terminated` is rejected; `active` and `on_leave` are allowed. Body `details.employment_status`. (The earlier name `employee_not_active` is obsolete.) |
 | 422 | `validation_failed` | Amount/currency/frequency/reason invalid or absent (syntax, ≤ 0, > 2 decimals, over bound or capacity, unknown currency, bad frequency, blank/over-long/missing reason, missing or `null` amount/currency/frequency) |
 | 422 | `no_change` | Amount, currency and frequency equal the current record's (DR-10) |
 | 422 | `missing_exchange_rate` | No `currency → USD` rate on or before the UTC date of the effective timestamp. Nothing is written; never defaults to 1 |
@@ -40,13 +40,13 @@ Defined once in `domain-decisions.md` §4.3. Summary: JSON **string** matching `
 
 ### Authorization
 - All `GET` endpoints are open **because all data is synthetic** (demo-only decision).
-- `POST` requires `Authorization: Bearer <demo write key>` over HTTPS. The key is never in URLs, query parameters, `VITE_*` variables or logs. **[APPROVAL DR-02]** (details: `architecture.md` §9.3).
+- `POST` requires `Authorization: Bearer <demo write key>` over HTTPS. The key is never in URLs, query parameters, `VITE_*` variables or logs. **[APPROVED (delegated) DR-02]** (details: `architecture.md` §9.3).
 - **Precedence when the server has no configured write key:** `403 writes_disabled` is returned for **every** write request, whether or not a header is supplied, before any other check. When a key is configured: missing or wrong → `401 unauthorized`.
 - No per-user identity; no audit attribution.
 
 ### Error precedence for `POST …/salary_revisions`
 Mirrors the step order of `domain-decisions.md` §7 (authoritative):
-1. `403 writes_disabled` (no server key configured; **before everything else, with or without a header**, so the fail-closed policy cannot be bypassed) → 2. `401 unauthorized` (key configured; missing or wrong) → 3. `400 invalid_request` (structural) → 4. `404 not_found` (employee, found when taking the row lock) → 5. `409 stale_salary_record` (DR-04 `[APPROVAL]`) → 6. `422 employee_not_eligible` → 7. `422 validation_failed` → 8. `422 no_change` → 9. `422 missing_exchange_rate` (after the single clock read) → 10. `409 revision_conflict`. The first failing check wins; checks 5–10 are all evaluated before any write, and no error leaves partial changes (the previous record is never closed without its successor being inserted in the same transaction).
+1. `403 writes_disabled` (no server key configured; **before everything else, with or without a header**, so the fail-closed policy cannot be bypassed) → 2. `401 unauthorized` (key configured; missing or wrong) → 3. `400 invalid_request` (structural) → 4. `404 not_found` (employee, found when taking the row lock) → 5. `409 stale_salary_record` (DR-04) → 6. `422 employee_not_eligible` → 7. `422 validation_failed` → 8. `422 no_change` → 9. `422 missing_exchange_rate` (after the single clock read) → 10. `409 revision_conflict`. The first failing check wins; checks 5–10 are all evaluated before any write, and no error leaves partial changes (the previous record is never closed without its successor being inserted in the same transaction).
 
 ### Client handling expected (matches `architecture.md` §9.3)
 `401` re-prompt for the passphrase (and clear it) · `403` show editing disabled · `409 stale_salary_record` reload employee and ask the user to review · `409 revision_conflict` retry message · `422` show field/business errors · `400` generic error · `500` generic error. No automatic retry of `POST`.
@@ -112,7 +112,7 @@ Page beyond the end: `"data": []`, `meta` otherwise unchanged (`total_count`, `t
 
 **Purpose:** one employee with the current salary and the complete salary history, newest first. Read-only.
 
-**Salary history is returned newest first, unpaginated and unbounded — an intentional MVP trade-off [APPROVAL DR-19].** Revisions can accumulate indefinitely, so **no maximum number of records is guaranteed** and the payload grows with every revision. (The seed gives each employee a small number of historical records by design; that says nothing about real use.) Phase 10 measures a long-history fixture; a paginated history endpoint is the documented follow-up if that shows a problem.
+**Salary history is returned newest first, unpaginated and unbounded — an intentional MVP trade-off [APPROVED (delegated) DR-19].** Revisions can accumulate indefinitely, so **no maximum number of records is guaranteed** and the payload grows with every revision. (The seed gives each employee a small number of historical records by design; that says nothing about real use.) Phase 10 measures a long-history fixture; a paginated history endpoint is the documented follow-up if that shows a problem.
 
 ### 200 response
 ```json
@@ -149,7 +149,7 @@ Page beyond the end: `"data": []`, `meta` otherwise unchanged (`total_count`, `t
   }
 }
 ```
-`can_revise_salary` is `true` for `active` **and** `on_leave`, `false` for `terminated` (DR-03 working default). It is a UI hint; the server enforces eligibility independently (`422 employee_not_eligible`). `on_leave` is not described as ineligible.
+`can_revise_salary` is `true` for `active` **and** `on_leave`, `false` for `terminated` (DR-03, approved). It is a UI hint; the server enforces eligibility independently (`422 employee_not_eligible`). `on_leave` is not described as ineligible.
 
 ### Errors
 `404 not_found`.
@@ -178,11 +178,11 @@ Page beyond the end: `"data": []`, `meta` otherwise unchanged (`total_count`, `t
 
 | Field | Rules |
 |-------|-------|
-| `amount` | Required string, format in "Decimal-string format" above; `> 0`; ≤ the upper bound **[APPROVAL DR-11 — value not yet chosen]** |
+| `amount` | Required string, format in "Decimal-string format" above; `> 0`; ≤ `1000000000.00` (DR-11, approved) |
 | `currency` | Required; must exist in `currencies`; must have a usable rate (server re-checks) |
 | `pay_frequency` | Required; `monthly` \| `annual` |
 | `reason` | Required; non-blank after trimming; ≤ 255 chars (DR-12) |
-| `expected_current_salary_record_id` | Integer. **Proposed required [APPROVAL DR-04]**: while mandatory, missing/non-integer → `400 invalid_request`, and a value ≠ the current record id at lock time → `409 stale_salary_record`. If DR-04 is resolved as optional, an absent field skips the check |
+| `expected_current_salary_record_id` | Integer, **required** (DR-04, approved): missing or non-integer → `400 invalid_request`; a value ≠ the current record id at lock time → `409 stale_salary_record` |
 
 ### Procedure (authoritative text: `domain-decisions.md` §7)
 Authenticate → lock employee → read current record (after the lock) → token check (DR-04) → eligibility → validate request data and no-op → read the injected clock **once**, truncate once to microseconds → using that same timestamp: FX lookup by its UTC date, `effective_to` of the previous record, `effective_from` of the new record → reject if the timestamp is not later than the current record's `effective_from` → close previous → insert new → commit.
@@ -217,7 +217,7 @@ Authenticate → lock employee → read current record (after the lock) → toke
 
 **Purpose:** compensation overview for the **active payroll population** in USD, with local-currency detail on country rows. Read-only; computed in SQL. Definitions: `domain-decisions.md` §10.
 
-### Query parameters (optional; narrow the whole summary) **[APPROVAL DR-16]**
+### Query parameters (optional; narrow the whole summary) **[APPROVED (delegated) DR-16]**
 `country` (ISO alpha-2), `department` (id), `job_level` (1–7). Invalid → `400 invalid_parameter`. No pagination (bounded by the number of countries and departments). Groups sorted by `total_annual_base_reporting` descending, then name.
 
 ### 200 response (numbers are illustrative placeholders, not seeded results)
@@ -269,7 +269,7 @@ Authenticate → lock employee → read current record (after the lock) → toke
 - Payroll metrics (`active_headcount`, totals, average, median, `local_totals`) include **only the active-payroll population** (DR-03).
 - **Median** is the exact `numeric` median defined in `domain-decisions.md` §10.3 (middle value for odd n; mean of the two middle values for even n; rounded to 2 dp at output), identical for organization, country and department rows (DR-15).
 - **`status_counts`** includes **all** statuses (all three keys always present, zeros included) for the **filtered employee population**. With no filters it reconciles to the total employee count (10,000 in the seed). With filters it reconciles to the employees matching those filters, not necessarily 10,000. `status_counts.active` equals `organization.active_headcount`.
-- `low_sample` is `true` when `active_headcount` < the low-sample threshold (a named constant; proposed value 10 **[APPROVAL DR-08]**). `local_totals` appears on country rows only and each entry sums a single currency; department rows carry no local totals because a department spans currencies. Group size (`active_headcount`) is always present beside average and median. Averages and medians are descriptive comparisons, not compa-ratios and not evidence of pay inequity or attrition risk.
+- `low_sample` is `true` when `active_headcount` < the low-sample threshold (a named constant; value 10 **[APPROVED (delegated) DR-08]**). `local_totals` appears on country rows only and each entry sums a single currency; department rows carry no local totals because a department spans currencies. Group size (`active_headcount`) is always present beside average and median. Averages and medians are descriptive comparisons, not compa-ratios and not evidence of pay inequity or attrition risk.
 - **Empty result contract:** a filter matching no active employees returns `active_headcount: 0`, `total_annual_base_reporting: "0.00"`, `average_annual_base_reporting: null`, `median_annual_base_reporting: null`; `by_country` and `by_department` are `[]`. Empty country/department groups are always omitted. `NaN`, `Infinity` and other invalid JSON numbers are never emitted.
 
 ### Errors
@@ -348,7 +348,7 @@ The export includes **every status that matches the filters**: unless the `statu
 
 ---
 
-## 6. `GET /api/v1/reference_data` **[APPROVAL DR-14]**
+## 6. `GET /api/v1/reference_data` (DR-14, approved)
 
 **Purpose:** option lists for filters and the revision form so the frontend hard-codes no domain lists. Read-only.
 
@@ -366,7 +366,7 @@ The export includes **every status that matches the filters**: unless the `statu
   }
 }
 ```
-**`has_rate` definition:** `true` when a usable `currency → USD` rate exists, using the lookup policy in `domain-decisions.md` §3.3 (the row with the greatest `effective_on` ≤ the **current UTC date**; USD qualifies through its identity row). It is advisory: the revision endpoint independently re-validates with the effective timestamp's UTC date and returns `422 missing_exchange_rate` if there is none. The revision form offers only `has_rate: true` currencies. `low_sample_threshold` is the named constant of DR-08 `[APPROVAL]` (proposed value 10); this field is added when DR-08 is approved (Phase 7).
+**`has_rate` definition:** `true` when a usable `currency → USD` rate exists, using the lookup policy in `domain-decisions.md` §3.3 (the row with the greatest `effective_on` ≤ the **current UTC date**; USD qualifies through its identity row). It is advisory: the revision endpoint independently re-validates with the effective timestamp's UTC date and returns `422 missing_exchange_rate` if there is none. The revision form offers only `has_rate: true` currencies. `low_sample_threshold` is the named constant of DR-08 (approved under delegation, value 10); its response field belongs to Phase 7.
 
 ---
 
@@ -378,7 +378,7 @@ The export includes **every status that matches the filters**: unless the `statu
 | `department`, `country` | Current employee state (DR-13) |
 | `employment_status` | Stored; meaning per DR-03 |
 | `can_revise_salary` | `employment_status <> terminated` (DR-03/DR-09) |
-| `current_salary` | The record with `effective_to IS NULL` (`domain-decisions.md` §5) |
+| `current_salary` | The record with `effective_to IS NULL`; for terminated employees this means last salary held, not currently paid (`domain-decisions.md` §5) |
 | `amount`, `currency`, `pay_frequency`, `reason` | Stored on the salary record |
 | `fx_rate` | Snapshot on the record (DR-05); lookup policy `domain-decisions.md` §3.3 |
 | `annual_base_local` | `amount × (12 \| 1)` (§2) |

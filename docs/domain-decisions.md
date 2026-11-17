@@ -2,7 +2,7 @@
 
 **Precedence:** rank 3 in the hierarchy defined in `architecture-review.md` §1. This document refines `docs/requirements.md` and never overrides it.
 **Status legend**
-- **Approved** — comes from the assessment, `requirements.md`, or an explicit owner instruction (source stated).
+- **Approved** — comes from the assessment, `requirements.md`, or an explicit owner instruction (source stated). **Approved (delegated)** marks a decision the architect made under the owner's 17 November 2026 authorisation of low-risk MVP decisions; the owner reviews it at G1 sign-off.
 - **Proposed — DR-nn `[APPROVAL]`** — a working default awaiting owner approval. The register in `architecture-review.md` §3 holds the question, trade-off and blocked phase. Nothing marked this way may be treated as final, and dependent implementation must not start until it is approved.
 
 Terminology: *reporting currency* = USD (agreed in the brief). *Local currency* = the currency a salary record is denominated in.
@@ -18,27 +18,27 @@ Terminology: *reporting currency* = USD (agreed in the brief). *Local currency* 
 | Never sum raw amounts of different currencies | Approved (brief) |
 | Revisions are immediate; no future-dated or retroactive changes | Approved (brief) |
 | History preserved; reject non-positive amounts; prevent overlapping periods | Approved (brief) |
-| Totals include active employees, using annualized converted base salary | Approved (brief); *the meaning of "active"* is DR-03 |
+| Totals include active employees, using annualized converted base salary | Approved (brief); "active" means status `active` (DR-03, approved) |
 | Group size shown beside average/median | Approved (brief) |
 | Half-open intervals `[effective_from, effective_to)` | Approved (owner instruction) |
-| One effective timestamp per revision, read after the lock, truncated once | Approved as a procedure (owner instruction); *timestamp vs date* is DR-01 |
+| One effective timestamp per revision, read after the lock, truncated once | Approved (owner instruction); UTC `timestamptz` (DR-01, approved) |
 | Money types and exact `numeric` median method (§4, §10) | Approved (owner instruction); rounding *policy* DR-06, median *definition* DR-15 |
 | Synthetic data only; exactly 10,000 employees | Approved (brief) |
-| Effective type (timestamp/date) | **DR-01** |
-| Employment statuses; active payroll population; who may be revised | **DR-03** |
-| `fx_rate` copied onto salary records | **DR-05** |
-| Per-employee rounding | **DR-06** |
-| Currency independent of country | **DR-07** |
-| Mandatory stale-edit token | **DR-04** |
-| No-op rejection | **DR-10** |
-| Amount upper bound | **DR-11** |
-| Required free-text reason | **DR-12** |
-| Terminated employee handling | **DR-09** |
-| Country/department grouping | **DR-13** |
-| Low-sample threshold | **DR-08** |
-| Median definition for even n | **DR-15** |
-| Analytics scope additions | **DR-16** |
-| Seed parameters | **DR-17** |
+| Effective type: UTC `timestamptz`, microsecond precision | Approved — DR-01 |
+| Employment statuses; active payroll population; who may be revised | Approved — DR-03 (`active`, `on_leave`, `terminated`; totals = `active` only; `terminated` not revisable) |
+| `fx_rate` copied onto salary records | Approved (delegated) — DR-05 |
+| Per-employee rounding | Approved (delegated) — **DR-06** |
+| Currency independent of country | Approved (delegated) — **DR-07** |
+| Mandatory stale-edit token | Approved — DR-04 |
+| No-op rejection | Approved (delegated) — **DR-10** |
+| Amount upper bound | Approved — DR-11 (`1000000000.00`, entered amount, own currency and frequency) |
+| Required free-text reason | Approved (delegated) — DR-12 |
+| Terminated employee handling | Approved (delegated) — DR-09 |
+| Country/department grouping | Approved (delegated) — **DR-13** |
+| Low-sample threshold | Approved (delegated) — **DR-08** |
+| Median definition for even n | Approved (delegated) — **DR-15** |
+| Analytics scope additions | Approved (delegated) — **DR-16** |
+| Seed parameters | Approved (delegated) — **DR-17** |
 
 The sections below state each rule in the form used for design review; the status of each is the one in this table.
 
@@ -60,7 +60,7 @@ annual_local = amount        if frequency = annual
 
 ## 3. Currencies, countries and exchange rates
 
-### 3.1 Currency vs country — Proposed, DR-07 `[APPROVAL]`
+### 3.1 Currency vs country — DR-07 (approved, delegated)
 - A salary's currency is chosen on the record. It is neither derived from nor validated against the employee's country. Two countries can share a currency (e.g. Germany and France in EUR); an employee may be paid in another currency.
 - Alternative (force currency = country default) breaks expatriate/contractor cases and conflates two concepts.
 
@@ -78,7 +78,8 @@ annual_local = amount        if frequency = annual
 | GBP | USD | 1.27000000 |
 | INR | USD | 0.01200000 |
 
-### 3.3 Rate lookup and snapshot — Proposed, DR-05 `[APPROVAL]`
+### 3.3 Rate lookup and snapshot — DR-05 (approved, delegated)
+- **Why:** `requirements.md` requires retaining "the conversion rate used"; the rate is stored on each salary record as `fx_rate numeric(18,8)`, CHECK `> 0`, with no foreign key to `exchange_rates`. Direction: 1 unit of the record's currency = `fx_rate` USD.
 - **Lookup policy:** the rate row with the greatest `effective_on` ≤ **the UTC date derived from the revision's single effective timestamp** (§7). No second clock read.
 - **No such rate → `422 missing_exchange_rate`**; nothing is written. Never default to 1; never skip conversion.
 - The chosen rate value is copied onto the new record as `fx_rate`, so past reporting does not depend on the rate table staying unchanged.
@@ -101,8 +102,8 @@ annual_local = amount        if frequency = annual
 | Currency exponent | All supported currencies have 2 minor-unit decimals; zero/three-decimal currencies are not seeded |
 | Rounding mode | Half away from zero: PostgreSQL `ROUND(numeric, 2)`; Ruby `BigDecimal#round(2, :half_up)`. Identical for the positive-only values used here |
 
-### 4.2 Rounding policy — Proposed, DR-06 `[APPROVAL]`
-Order of operations (working default):
+### 4.2 Rounding policy — DR-06 (approved, delegated)
+Order of operations (DR-06, approved under delegation):
 1. `annual_local = amount × (12 | 1)` — exact.
 2. `annual_reporting = ROUND(annual_local × fx_rate, 2)` — **annualize first, convert once, round once per employee**.
 3. `SUM`, `AVG` and the median are computed over the **already-rounded** per-employee `annual_reporting`; average and median are rounded to 2 dp only at output.
@@ -118,13 +119,14 @@ Rationale: org totals equal the sum of the per-employee values shown in the UI a
 
 Why the order matters (GBP): converting monthly first gives 4,123.45 × 1.27 = 5,236.7815 → 5,236.78; ×12 = 62,841.36, versus 62,841.38 annualize-first. Tests pin these cases.
 
-### 4.3 Amount input format *(decimal-string syntax: owner instruction; upper bound: DR-11)*
+### 4.3 Amount input format *(decimal-string syntax: owner instruction; upper bound: DR-11, approved)*
 The API accepts `amount` only as a JSON **string**:
 - Syntax: `^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$` — digits only, optional fractional part of **1 or 2 digits**, no sign, no exponent/scientific notation (`1e5`), no thousands separators, no leading zeros (`007`), no leading/trailing whitespace, no `NaN`/`Infinity`, no empty string.
 - A JSON **number** (`85000`, `85000.5`) is rejected as a structural error: `400 invalid_request`.
 - A string failing the syntax (including more than two fractional digits, a sign or exponent) → `422 validation_failed` with `details.amount`.
 - Value `> 0` (so `"0"`, `"0.0"`, `"0.00"` → `422 validation_failed`).
-- Value ≤ the **approved upper bound (DR-11, not yet chosen)**. Separately, a value exceeding the column capacity is always rejected with the same `422 validation_failed` before reaching the database; a numeric-overflow error from PostgreSQL must never surface as a 500.
+- Value ≤ **`1000000000.00`** (DR-11, approved): a per-record limit on the *entered* amount in the salary's own currency and pay frequency, **not** a USD-converted limit. The same nominal limit applies to every currency and to monthly and annual amounts (accepted trade-off). It is checked in the application before any write; the database does not carry an upper-bound CHECK. Separately, a value exceeding the column capacity is always rejected with the same `422 validation_failed` before reaching the database; a numeric-overflow error from PostgreSQL must never surface as a 500.
+- More than two fractional digits are rejected by the syntax rule above **before persistence**: PostgreSQL `numeric(14,2)` would otherwise round them silently (verified in the spike, `architecture-review.md` §12).
 - Parsed into `BigDecimal` from the string; never via `Float`.
 - Rate values in responses are strings with 8 fractional digits.
 
@@ -133,13 +135,14 @@ The API accepts `amount` only as a JSON **string**:
 - **Current salary** = the single record with `effective_to IS NULL`.
 - **Invariant:** every employee has exactly one open record, including terminated employees (DR-09). Partial unique index guarantees *at most one*; service, seed and a verification query establish *at least one*. The database cannot enforce "at least one" natively.
 - Employees are created only by the seed in the MVP, so the invariant is established at creation.
+- **Reason (DR-12, approved, delegated):** every salary record, including the first and every seeded one, carries a required free-text reason: trimmed by the application, 1–255 characters, not blank. There is no controlled vocabulary. The database enforces `NOT NULL`, `varchar(255)` and a non-blank CHECK.
 
 ## 6. Effective dates and interval integrity
 
-### 6.1 Semantics *(half-open: Approved; type: DR-01)*
+### 6.1 Semantics *(half-open: Approved; type: DR-01, approved)*
 - Intervals are `[effective_from, effective_to)`: start inclusive, end exclusive; the end equals the successor's start **exactly**. No offset is ever applied: `effective_to` is never computed as "successor start minus one day" (or minus any unit); it is the same timestamp value.
 - As-of rule for instant *t*: `effective_from <= t AND (effective_to IS NULL OR t < effective_to)`. At the exact boundary between A and B, **B applies**. (No MVP endpoint queries as-of; the rule governs history display, tests and future use.)
-- Working default (DR-01): `timestamptz` set by the server, shown in UTC.
+- Type (DR-01, approved): UTC `timestamptz` with microsecond precision, set by the server, shown in UTC. A record is current when `effective_to IS NULL`.
 
 ### 6.2 Guarantees: database vs application
 
@@ -155,36 +158,35 @@ The API accepts `amount` only as a JSON **string**:
 
 **The partial unique index alone does not prevent historical overlaps**: it only stops two open-ended records. Two closed records `[Jan, Jun)` and `[Mar, Sep)` would pass it. The exclusion constraint prevents overlapping historical intervals (and also subsumes the one-open-record rule, since two unbounded ranges overlap). The index is kept as the lookup index for "current salary" and for a clearer error. **The exclusion constraint does not guarantee that every employee has an open record**; the service and seed verification establish that.
 
-**Dependency:** the exclusion constraint requires `btree_gist` on every database in use. Hosted availability must be verified **before Phase 3** (DR-20). If unavailable, the only alternative is a weaker fallback (partial unique index + row lock + application overlap validation) which needs its own explicit approval and the weaker guarantee must be stated openly.
+**Dependency (DR-20: design approved):** the exclusion constraint requires `btree_gist` on every database in use. It was verified locally on PostgreSQL 14.25 (`architecture-review.md` §12); **hosted availability is not verified** and remains a prerequisite (the register's G1 still requires it before Phase 3 unless the owner moves it, `architecture-review.md` §7.2 U-7). If it is unavailable, the only alternative is a weaker fallback (partial unique index + row lock + application overlap validation) which needs its own explicit approval and the weaker guarantee must be stated openly.
 
-### 6.3 Same-day revisions and "equal or earlier" — DR-01 `[APPROVAL]`
+### 6.3 Same-day revisions and "equal or earlier" — DR-01 (approved)
+Salary effectivity uses UTC `timestamptz` timestamps, not dates:
+- Several revisions on the same UTC calendar day are permitted, as long as their timestamps are strictly increasing, so each interval is non-empty. A typo can be superseded at once.
+- The client cannot supply an effective date (immediate effect), so future-dated and backdated revisions are impossible by construction.
+- The server determines one effective timestamp per revision and normalises it to microsecond precision **once** (`Time#floor(6)`) before using that single value to close the old record and open the new one. Without it, a nanosecond Ruby time is truncated by Rails but *rounded* by PostgreSQL when passed as a literal, so the two could disagree (spike, `architecture-review.md` §12).
+- If the effective timestamp is not strictly later than the current record's `effective_from` (clock skew, same-microsecond race, future-dated seed) → `409 revision_conflict`; possible under clock skew or a same-microsecond attempt; verification uses an injected clock.
 
-| Option | Behaviour | Pros | Cons |
-|--------|-----------|------|------|
-| **A. Timestamps (working default)** | Server instant; several revisions per day, each with a distinct non-empty interval | A typo can be superseded at once; no calendar/time-zone ambiguity; exact maths | History shows times; HR convention is dates |
-| B. Dates | `effective_from` is a date | Matches HR convention | Second same-day revision would be an empty interval `[d,d)`, so must be rejected; needs a time zone |
+Why timestamps rather than date-only: with dates, a second same-day revision would be an empty interval `[d,d)` (verified: PostgreSQL reports it empty), so it would have to be rejected and a time zone for "today" defined; HR convention is dates, and history therefore shows times — an accepted cost.
 
-Under A: the client cannot supply an effective date (immediate effect), so future-dated and backdated revisions are impossible by construction. If the single effective timestamp ≤ the current record's `effective_from` (clock skew, same-microsecond race, future-dated seed) → `409 revision_conflict`; unreachable in normal use; tested with an injected clock.
-Under B: the effective date would be the server's UTC date, the one-revision-per-day rule would apply, and the clock, FX-lookup and timestamp-ordering steps of §7 (steps 7–9) would change accordingly.
-
-### 6.4 No-op revisions — DR-10 `[APPROVAL]`
+### 6.4 No-op revisions — DR-10 (approved, delegated)
 Reject when amount, currency and frequency all equal the current record's: `422 no_change`. A reason-only change is not a salary revision.
 
 ## 7. Salary revision transaction and concurrency
 
-**Procedure *(owner-specified order; the effective-timestamp type is DR-01; the token check in step 4 is the working default of DR-04 `[APPROVAL]`)***
+**Procedure *(owner-specified order; the effective-timestamp type is DR-01 and the mandatory token in step 4 is DR-04, both approved)***
 ```
  1. Authenticate / authorize the write request (controller, before any database work)
       403 writes_disabled  if no server write key is configured (checked first, whatever the request carries)
       401 unauthorized     if a key is configured and the request's key is missing or wrong
     Structural checks (controller): 400 invalid_request on malformed JSON, missing salary_revision
-      object, wrong JSON types (e.g. amount not a string), or — while DR-04 is mandatory — a missing
+      object, wrong JSON types (e.g. amount not a string), or a missing
       / non-integer expected_current_salary_record_id
 
 BEGIN
  2. Lock the employee row:  SELECT … FROM employees WHERE id = ? FOR UPDATE     -- 404 not_found if absent
  3. Read the current (open) salary record  — AFTER the lock, never before
- 4. Token check  [DR-04 — proposed mandatory]:
+ 4. Token check  [DR-04 — approved, mandatory]:
       409 stale_salary_record  if expected_current_salary_record_id ≠ current.id
  5. Eligibility:      422 employee_not_eligible   (status is terminated; DR-03)
  6. Validate request data and no-op:
@@ -200,7 +202,7 @@ BEGIN
 11. INSERT the new record (fx_rate = rate from step 8, effective_from = effective_at, effective_to = NULL)
 12. COMMIT — atomically
 ```
-- **If DR-04 is resolved as optional**, a missing token skips step 4 and no longer raises `400`; all other steps are unchanged. **If it is not approved as proposed, this document must be updated.**
+- The token is mandatory (DR-04, approved): a missing or non-integer `expected_current_salary_record_id` is a `400`, and a mismatch is `409 stale_salary_record`.
 - **One clock read.** Steps 8–11 use the same `effective_at` value; the clock is never called independently for the FX lookup, the closure and the insert. `previous.effective_to` therefore equals `new.effective_from` exactly.
 - The clock is read **after** the lock, so a transaction that waited gets a later timestamp than the one it waited on; lock order equals time order.
 - Truncation to microseconds happens once so Ruby's nanosecond time equals what PostgreSQL stores (otherwise the closed `effective_to` could differ from the next `effective_from`).
@@ -210,8 +212,8 @@ BEGIN
 - Close-then-insert order matters: the exclusion constraint is checked per statement, so closing first leaves no overlap at insert time.
 - Resulting error precedence: 403 → 401 → 400 → 404 → 409 stale → 422 not eligible → 422 validation → 422 no-op → 422 missing rate → 409 clock conflict; mirrored in `api-contracts.md`.
 
-## 8. Inactive and terminated employees — DR-03, DR-09 `[APPROVAL]`
-Working default:
+## 8. Inactive and terminated employees — DR-03 (approved), DR-09 (approved, delegated)
+**Revision eligibility and analytics inclusion are different questions** (DR-03, approved): an `on_leave` employee **can** be revised but is **not** counted in compensation totals; a `terminated` employee can neither be revised nor counted; only `active` employees are counted.
 
 | Status | In active payroll totals | Salary revision | Shown in directory/export |
 |--------|--------------------------|-----------------|----------------------------|
@@ -219,13 +221,13 @@ Working default:
 | `on_leave` | **No** (literal reading of "active employees") | **Allowed** | Yes |
 | `terminated` | No | Rejected (`employee_not_eligible`) | Yes |
 
-- Terminated employees keep their last salary record **open**: "last salary held". This preserves the one-open-record invariant and needs no termination workflow. `terminated_on` is required iff status is `terminated`.
+- **DR-09 (approved, delegated):** terminated employees keep their last salary record **open**: "last salary held". This preserves the one-open-record invariant and needs no termination workflow. `terminated_on` is required iff status is `terminated`.
 - Eligibility is "not terminated". `on_leave` is **not** described as ineligible anywhere; `can_revise_salary` in the API follows this table.
-- Machine-readable meaning: `422 employee_not_eligible` is returned only for a status that DR-03 excludes from revisions (`terminated` under the working default). `active` and `on_leave` revisions proceed. (The earlier name `employee_not_active` is obsolete and must not be used.)
-- Ambiguity: on-leave staff are usually still paid; excluding them from totals follows the brief literally. Simplest alternative: drop `on_leave`.
+- Machine-readable meaning: `422 employee_not_eligible` is returned only for a status that DR-03 excludes from revisions (`terminated`, DR-03). `active` and `on_leave` revisions proceed. (The earlier name `employee_not_active` is obsolete and must not be used.)
+- Trade-off accepted with DR-03: on-leave staff are usually still paid, but excluding them from totals follows the brief's literal "active employees".
 - The MVP has no status-change endpoint; status is set by the seed (console in emergencies).
 
-## 9. Country or department changes — DR-13 `[APPROVAL]`
+## 9. Country or department changes — DR-13 (approved, delegated)
 - No MVP endpoint changes them, but the model must be safe if they change.
 - Analytics group by the employee's **current** country/department against the **current** salary. There is no history of either, so as-of group analytics are not supported and must not be implied.
 - A country change does not change salary currency or create a salary record; a currency change needs a revision.
@@ -233,7 +235,7 @@ Working default:
 
 ## 10. Payroll totals and dashboard metrics
 
-**Active payroll population** = employees with status `active` (DR-03) and their current salary record. *(Approved: "active employees"; the meaning of active is DR-03.)*
+**Active payroll population** = employees with status `active` (DR-03) and their current salary record. *(Approved: "active employees"; status `active`, DR-03.)*
 
 ### 10.1 Definitions
 
@@ -244,7 +246,7 @@ Working default:
 | `average_annual_base_reporting` | `AVG(annual_reporting)`, rounded to 2 dp at output |
 | `median_annual_base_reporting` | Exact `numeric` median (§10.3), rounded to 2 dp at output |
 | `local_totals` (country rows only; DR-16) | Per currency in the group: `active_headcount` and `SUM(annual_local)`. Same-currency sums only |
-| `low_sample` (DR-08 `[APPROVAL]`) | `true` when `active_headcount` < 10 (a named constant whose value is pending approval) |
+| `low_sample` (DR-08 (approved, delegated)) | `true` when `active_headcount` < 10 (a named constant, approved under delegation) |
 | `status_counts` (organization section) | Employees per status for the **filtered employee population** (all three statuses, zeros included) |
 
 Department rows show reporting currency only (a department spans currencies).
@@ -255,7 +257,7 @@ Department rows show reporting currency only (a department spans currencies).
 - **With filters** (`country`, `department`, `job_level`), it reconciles to the employees matching those filters — **not** necessarily 10,000.
 - `status_counts.active` always equals `organization.active_headcount`.
 
-### 10.3 Exact numeric median — Proposed, DR-15 `[APPROVAL]`
+### 10.3 Exact numeric median — DR-15 (approved, delegated)
 `percentile_cont(0.5) WITHIN GROUP (ORDER BY …)` is defined in PostgreSQL for `double precision` (and `interval`) ordering values; a `numeric` sort key would be coerced to `double precision` and the result returned as `double precision`. That breaks the no-float rule, and casting salary values to `double precision` is **not** an acceptable workaround. The median is instead computed exactly:
 
 1. Rank `annual_reporting` ascending within each group (`ROW_NUMBER() OVER (PARTITION BY group ORDER BY annual_reporting, employee_id)`).
@@ -304,13 +306,14 @@ The same definition is used for the organization (single group), each country, a
 - Differences or outliers are **not evidence of pay inequity or attrition risk**; no such wording.
 - A `job_level` filter lets users compare like with like.
 
-## 11. Synthetic data rules *(synthetic and exactly 10,000: Approved; parameters: DR-17 `[APPROVAL]`)*
+## 11. Synthetic data rules *(synthetic and exactly 10,000: Approved; parameters: DR-17 (approved, delegated))*
 - Exactly **10,000** employees; all values fabricated; nothing derived from real payroll.
 - Deterministic: fixed RNG seed and fixed anchor date constant (not `Date.today`); two runs yield identical data. The anchor date must be ≤ the deployment date so any new revision's `effective_from` is later than every seeded record.
 - Names from curated in-repo lists (no Faker).
-- Coverage: multiple countries (two sharing a currency), several currencies, several departments, job levels 1–7, the statuses chosen under DR-03, a minority of employees paid in a non-home currency.
-- Statuses: majority `active`; small shares of the others; exact proportions fixed in the seed with no claim of realism.
-- Salary history: a fixed share of employees has 1–3 closed historical records plus one open record; dates ordered, contiguous, after `hired_on`, and before `terminated_on` where applicable.
+- Coverage: multiple countries (two sharing a currency), several currencies, several departments, job levels 1–7, the three statuses (DR-03), a minority of employees paid in a non-home currency.
+- Statuses: majority `active`; small shares of the others; fixed generation weights (DR-17), with no claim of realism.
+- Salary history: a fixed probability distribution selects 0–3 closed historical records per employee, plus one open record; dates ordered, contiguous, after `hired_on`, and before `terminated_on` where applicable.
+- Every seeded salary record has a non-blank reason of at most 255 characters (DR-12).
 - At least one group with fewer than 10 active employees so `low_sample` is demonstrable.
 - Employee numbers `ACME-00001` … `ACME-10000`.
 - The seed refuses to run against production unless explicitly overridden and ends with verification: exactly 10,000 employees; every employee has exactly one open record; no overlaps; every record has `fx_rate`; `terminated_on` rules hold; `status_counts` sums to 10,000.
@@ -320,7 +323,7 @@ The same definition is used for the organization (single group), each country, a
 | Edge case | Decision |
 |-----------|----------|
 | Several revisions on one calendar day | Allowed under timestamp effectivity (DR-01) |
-| Effective instant ≤ current `effective_from` | `409 revision_conflict`; unreachable via the API (client cannot supply a date); tested with injected clock |
+| Effective instant ≤ current `effective_from` | `409 revision_conflict`; possible under clock skew or a same-microsecond attempt; test with an injected clock |
 | Terminate an employee with a current record | Record stays open; excluded from totals; further revisions rejected (DR-09) |
 | Country/department change | Current-state grouping only; salary currency unchanged (DR-13) |
 | Currency without a configured rate | `422 missing_exchange_rate`; nothing written |
@@ -356,4 +359,4 @@ The same definition is used for the organization (single group), each country, a
 | Exactly 10,000 seeded employees; determinism | Seed + verification | Seed spec; two-run fingerprint (Phase 6) |
 
 ## 14. Pending decisions
-All `[APPROVAL]` items are tracked, with recommended default, trade-off and blocked phase, only in `architecture-review.md` §3 (DR-01 … DR-24). This document does not keep a separate list.
+All decisions — approved (with date and scope) and `[APPROVAL]` — are tracked, with recommended default, trade-off and blocked phase, only in `architecture-review.md` §3 (DR-01 … DR-24). This document does not keep a separate approval list. See the register for owner approvals, delegated decisions, DR-20 hosted verification and DR-22.
